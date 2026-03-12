@@ -1,7 +1,12 @@
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define sign(x) ((x > 0) - (x < 0))
+#define MAX(x, y) x > y ? x : y
+#define MIN(x, y) x > y ? y : x
 
 typedef struct ImagePGM {
   uint16_t *buffer;
@@ -10,36 +15,104 @@ typedef struct ImagePGM {
   uint16_t height;
 } ImagePGM;
 
-typedef struct RGB{
-    uint16_t r;
-    uint16_t g;
-    uint16_t b;
+typedef struct RGB {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
 } RGB;
 
-typedef struct ImagePPM{
-    RGB* buffer;
-    uint16_t maxval;
-    uint16_t width;
-    uint16_t height;
+typedef struct ImagePPM {
+  RGB *buffer;
+  uint16_t width;
+  uint16_t height;
 } ImagePPM;
 
-int ImagePPM_save(ImagePPM const* img, char const *filepath){
-    FILE* file = fopen(filepath, "wb");
-    if (!file){
-        fprintf(stderr, "Não conseguiu salvar o arquivo %s\n", filepath);
-        return 1;
-    }
-    fprintf(file, "P6\n%hu %hu\n%hu\n", img->width, img->height, img->maxval);
-    size_t total_pixels = (size_t)img->height * (size_t)img->width;
-    if(fwrite(img->buffer, sizeof(RGB), total_pixels, file) != total_pixels){
-        fprintf(stderr, "Erro na escrita do buffer da imagem %s\n", filepath);
-        fclose(file);
-        return 1;
-    }
+typedef struct Point2D {
+  uint16_t x;
+  uint16_t y;
+} Point2D;
+
+typedef struct Axis {
+  double padding;
+  uint16_t width;
+} Axis;
+
+// void lineplot(Axis ax, uint16_t *x, uint16_t *y, size_t N) {}
+
+int ImagePPM_save(ImagePPM const *img, char const *filepath) {
+  FILE *file = fopen(filepath, "wb");
+  if (!file) {
+    fprintf(stderr, "Não conseguiu salvar o arquivo %s\n", filepath);
+    return 1;
+  }
+  fprintf(file, "P6\n%hu %hu\n%hu\n", img->width, img->height, 255);
+  size_t total_pixels = (size_t)img->height * (size_t)img->width;
+  if (fwrite(img->buffer, sizeof(RGB), total_pixels, file) != total_pixels) {
+    fprintf(stderr, "Erro na escrita do buffer da imagem %s\n", filepath);
     fclose(file);
-    return 0;
+    return 1;
+  }
+  fclose(file);
+  return 0;
 }
 
+ImagePPM ImagePPM_create_solid_canvas(RGB color, uint16_t width,
+                                      uint16_t height) {
+  ImagePPM img = {0};
+  img.width = width;
+  img.height = height;
+  img.buffer = malloc(sizeof(RGB) * img.width * img.height);
+  for (size_t i = 0; i < (size_t)img.width * img.height; i++) {
+    img.buffer[i].r = color.r;
+    img.buffer[i].b = color.g;
+    img.buffer[i].g = color.g;
+  }
+  return img;
+}
+
+int __ImagePPM_draw_shallow_rectangle(ImagePPM *img, RGB color, Point2D p1,
+                                    Point2D p2, uint16_t width) {
+  uint16_t x_min = MIN(p1.x, p2.x);
+  uint16_t x_max = MAX(p1.x, p2.x);
+  uint16_t y_min = MIN(p1.y, p2.y);
+  uint16_t y_max = MAX(p1.y, p2.y);
+  if (x_max > img->width) {
+    printf("x=%hu é maior que img.width=%hu", x_max, img->width);
+    return 1;
+  }
+  if (y_max > img->height) {
+    printf("y=%hu é maior que img.width=%hu", y_max, img->height);
+    return 1;
+  }
+
+  for (uint16_t x = x_min; x <= x_max; x++) {
+    for (uint16_t i = 0; i < width; i++) {
+      img->buffer[img->width * (y_min + i) + x] = color;
+      img->buffer[img->width * (y_max - i) + x] = color;
+    }
+  }
+  for (uint16_t y = y_min; y <= y_max; y++) {
+    for (uint16_t i = 0; i < width; i++) {
+      img->buffer[img->width * y + (x_min + i)] = color;
+      img->buffer[img->width * y + (x_max - i)] = color;
+    }
+  }
+  return 0;
+}
+
+int ImagePPM_draw_ax(ImagePPM *img, Axis ax) {
+  return __ImagePPM_draw_shallow_rectangle(
+      img, (RGB){0, 0, 0},
+      (Point2D){img->width * ax.padding, img->height * ax.padding},
+      (Point2D){img->width * (1 - ax.padding), img->height * (1 - ax.padding)},
+      ax.width);
+}
+
+void ImagePPM_close(ImagePPM *img) {
+  free(img->buffer);
+  img->height = 0;
+  img->width = 0;
+}
 
 void ImagePGM_close(ImagePGM *img) {
   free(img->buffer);
@@ -148,31 +221,28 @@ int main(int argc, char **argv) {
   printf("Maior cinza definido no arquivo %hu \n", img.max_gray);
   printf("---------------\n");
 
-  ImagePPM img_test={0};
-  img_test.width=1000;
-  img_test.height=1000;
-  img_test.maxval=255;
-  img_test.buffer=malloc(sizeof(RGB)*img_test.width*img_test.height);
-  for (size_t i = 0; i < (size_t)img_test.width * img_test.height; i++) {
-    img_test.buffer[i].r = rand() % (img_test.maxval + 1);
-    img_test.buffer[i].g = rand() % (img_test.maxval + 1);
-    img_test.buffer[i].b = rand() % (img_test.maxval + 1);
-  }
-  ImagePPM_save(&img_test,"teste.ppm");
+  uint16_t width = 800;
+  uint16_t height = 600;
+  ImagePPM img_test =
+      ImagePPM_create_solid_canvas((RGB){.r=255, .g=255, .b=255}, width, height);
+  ImagePPM_draw_ax(&img_test, (Axis){.width=10,.padding=0.125});
+  ImagePPM_save(&img_test, "teste.ppm");
 
-
-  uint16_t line_number;
-  while (1) {
-    printf("Escolha uma linha a ser analisada:\n");
-    if (scanf("%hu", &line_number) != 1) {
-      while (getchar() != '\n');
-      continue;
-    }
-    if (line_number >= img.height) {
-      printf("Linha %hu fora da imagem (máximo %hu)\n", line_number, img.height - 1);
-      continue;
-    }
-    break;
-  }
+  // uint16_t line_number;
+  // while (1) {
+  //   printf("Escolha uma linha a ser analisada:\n");
+  //   if (scanf("%hu", &line_number) != 1) {
+  //     while (getchar() != '\n')
+  //       ;
+  //     continue;
+  //   }
+  //   if (line_number >= img.height) {
+  //     printf("Linha %hu fora da imagem (máximo %hu)\n", line_number,
+  //            img.height - 1);
+  //     continue;
+  //   }
+  //   break;
+  // }
+  ImagePPM_close(&img_test);
   ImagePGM_close(&img);
 }
