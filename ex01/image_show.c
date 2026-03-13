@@ -415,9 +415,12 @@ int NetpbmImage_read_file(char const *filepath, NetpbmImage *img) {
     goto clean;
   }
 
+  Sample16 saved_max_intensity = img->max_intensity;
   if (NetpbmImage_create(img, img->width, img->height) != 0) {
     goto clean;
   }
+  img->max_intensity = saved_max_intensity;
+
   fgetc(pgm_file);
   if (strcmp(magic_number, "P2") == 0) {
     for (size_t i = 0; i < img->height; i++) {
