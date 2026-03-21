@@ -13,15 +13,15 @@ pub const ColorSpace = enum {
     }
     pub fn luminance(comptime self: ColorSpace, pixel: anytype) f32 {
         std.debug.assert(self.channels() == pixel.len);
-        return switch (self) {
-            .grayscale => @floatFromInt(pixel[0]),
+        switch (self) {
+            .grayscale => return @floatFromInt(pixel[0]),
             .rgb => {
                 const red: f32 = @floatFromInt(pixel[0]);
                 const blue: f32 = @floatFromInt(pixel[1]);
                 const green: f32 = @floatFromInt(pixel[2]);
-                0.2126 * red + 0.7152 * blue + 0.0722 * green;
+                return 0.2126 * red + 0.7152 * blue + 0.0722 * green;
             },
-        };
+        }
     }
 };
 
@@ -84,6 +84,21 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
                 .planar => self.data.set(index, value),
             }
         }
+
+        pub fn applyP2PTransformation(self: *Self, comptime func: anytype) void {
+            if (storage == .interleaved) {
+                for (self.data) |*pixel_ptr| {
+                    pixel_ptr.* = func(pixel_ptr.*);
+                }
+            } else {
+                for (0..self.height) |y| {
+                    for (0..self.width) |x| {
+                        self.setPixel(x, y, func(self.getPixel(x, y)));
+                    }
+                }
+            }
+        }
+
         pub fn get_histogram(self: *Self, allocator: Allocator) ![]usize {
             const bin_count: usize = std.math.maxInt(Self.component_type) + 1;
             var counts = try allocator.alloc(usize, bin_count);
