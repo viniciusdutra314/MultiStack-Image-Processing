@@ -72,7 +72,9 @@ pub fn readPgmFromReaderAs(
 
     var buffer: [64]u8 = undefined;
     const magic = try readNextToken(reader, &buffer);
-    if (!std.mem.eql(u8, magic, "P5") and !std.mem.eql(u8, magic, "P2")) {
+    const is_p2 = std.mem.eql(u8, magic, "P2");
+    const is_p5 = std.mem.eql(u8, magic, "P5");
+    if (!is_p5 and !is_p2) {
         return PgmError.InvalidMagicNumber;
     }
     const width = try parseNextInt(reader, &buffer);
@@ -82,6 +84,30 @@ pub fn readPgmFromReaderAs(
         return PgmError.IncompatibleOutputImageType;
     }
     var image = try T.init(allocator, width, height);
-    errdefer image.deinit();
+    errdefer image.deinit(allocator);
+    if (is_p2) {
+        for (0..height) |y| {
+            for (0..width) |x| {
+                const val = try parseNextInt(reader, &buffer);
+                image.setPixel(x, y, .{@as(T.component_type, @intCast(val))});
+            }
+        }
+    } else {
+        const is_16bit = max_val > 255;
+        for (0..height) |y| {
+            for (0..width) |x| {
+                var value: u16 = undefined;
+                if (is_16bit) {
+                    const b1 = try reader.takeByte();
+                    const b2 = try reader.takeByte();
+                    value = (@as(u16, b1) << 8) | b2;
+                } else {
+                    value = try reader.takeByte();
+                }
+                image.setPixel(x, y, .{@as(T.component_type, @intCast(value))});
+            }
+        }
+    }
+
     return image;
 }

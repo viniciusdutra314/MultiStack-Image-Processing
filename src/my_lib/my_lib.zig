@@ -5,12 +5,22 @@ const Allocator = std.mem.Allocator;
 pub const ColorSpace = enum {
     grayscale,
     rgb,
-    rgba,
-    pub fn channels(self: ColorSpace) usize {
+    pub fn channels(comptime self: ColorSpace) usize {
         return switch (self) {
             .grayscale => 1,
             .rgb => 3,
-            .rgba => 4,
+        };
+    }
+    pub fn luminance(comptime self: ColorSpace, pixel: anytype) f32 {
+        std.debug.assert(self.channels() == pixel.len);
+        return switch (self) {
+            .grayscale => @floatFromInt(pixel[0]),
+            .rgb => {
+                const red: f32 = @floatFromInt(pixel[0]);
+                const blue: f32 = @floatFromInt(pixel[1]);
+                const green: f32 = @floatFromInt(pixel[2]);
+                0.2126 * red + 0.7152 * blue + 0.0722 * green;
+            },
         };
     }
 };
@@ -20,17 +30,12 @@ pub const StorageType = enum {
     planar,
 };
 
-pub const ConversionPolicy = enum {
-    strict,
-    scale,
-};
-
 pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptime storage: StorageType) type {
-    const Pixel = [color_space.channels()]Component;
     return struct {
         const Self = @This();
         pub const colorspace = color_space;
         pub const component_type = Component;
+        pub const Pixel = [color_space.channels()]Component;
 
         width: usize,
         height: usize,
@@ -38,7 +43,6 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
             .interleaved => []Pixel,
             .planar => std.MultiArrayList(Pixel),
         },
-        allocator: Allocator,
 
         pub fn init(allocator: Allocator, width: usize, height: usize) !Self {
             const data = try allocator.alloc(Pixel, width * height);
@@ -46,12 +50,11 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
                 .width = width,
                 .height = height,
                 .data = data,
-                .allocator = allocator,
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            self.allocator.free(self.data);
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            allocator.free(self.data);
         }
 
         pub fn sizeInBytes(self: *Self) usize {
@@ -67,6 +70,10 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
                 .planar => self.data.get(index),
             };
         }
+        pub fn getLuminance(self: Self, x: usize, y: usize) f32 {
+            const pixel = self.getPixel(x, y);
+            return color_space.luminance(pixel);
+        }
 
         pub fn setPixel(self: *Self, x: usize, y: usize, value: Pixel) void {
             std.debug.assert(x < self.width);
@@ -77,14 +84,21 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
                 .planar => self.data.set(index, value),
             }
         }
-        // pub fn get_histogram(self: *Self,allocator:, bin_count_opt: ?usize) ![]usize {
-        //     const bin_count: usize = undefined;
-        //     if (bin_count_opt) |count| {
-        //         bin_count = count;
-        //     } else {
-        //         bin_count = 256;
-        //     }
-        // }
+        pub fn get_histogram(self: *Self, allocator: Allocator) ![]usize {
+            const bin_count: usize = std.math.maxInt(Self.component_type) + 1;
+            var counts = try allocator.alloc(usize, bin_count);
+            @memset(counts, 0);
+            errdefer allocator.destroy(counts);
+            for (0..self.height) |y| {
+                for (0..self.width) |x| {
+                    const lum = self.getLuminance(x, y);
+                    counts[
+                        @intFromFloat(lum)
+                    ] += 1;
+                }
+            }
+            return counts;
+        }
     };
 }
 
@@ -93,7 +107,7 @@ test "Image initialization and pixel access" {
     const RgbImage = Image(.rgb, u8, .interleaved);
 
     var img = try RgbImage.init(allocator, 10, 10);
-    defer img.deinit();
+    defer img.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 10), img.width);
     try std.testing.expectEqual(@as(usize, 10), img.height);
@@ -112,7 +126,7 @@ test "Grayscale image with float components" {
     const GrayImage = Image(.grayscale, f32);
 
     var img = try GrayImage.init(allocator, 2, 2);
-    defer img.deinit();
+    defer img.deinit(allocator);
 
     const val = [_]f32{0.5};
     img.setPixel(1, 1, val);
