@@ -36,27 +36,41 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
         pub const colorspace = color_space;
         pub const component_type = Component;
         pub const Pixel = [color_space.channels()]Component;
-
+        const SoAPixel = struct {
+            p: Pixel,
+        };
         width: usize,
         height: usize,
         data: switch (storage) {
             .interleaved => []Pixel,
-            .planar => std.MultiArrayList(Pixel),
+            .planar => std.MultiArrayList(SoAPixel),
         },
 
         pub fn init(allocator: Allocator, width: usize, height: usize) !Self {
-            const data = try allocator.alloc(Pixel, width * height);
-            return Self{
-                .width = width,
-                .height = height,
-                .data = data,
+            return switch (storage) {
+                .interleaved => Self{ .width = width, .height = height, .data = try allocator.alloc(Pixel, width * height) },
+                .planar => {
+                    var data = std.MultiArrayList(SoAPixel){};
+                    try data.ensureTotalCapacity(allocator, width * height);
+                    data.len = width * height;
+                    return Self{
+                        .width = width,
+                        .height = height,
+                        .data = data,
+                    };
+                },
             };
         }
 
-        pub fn deinit(self: *Self, allocator: Allocator) void {
-            allocator.free(self.data);
+        pub fn deinit(self: Self, allocator: Allocator) void {
+            switch (storage) {
+                .interleaved => allocator.free(self.data),
+                .planar => {
+                    var mutable_data = self.data;
+                    mutable_data.deinit(allocator);
+                },
+            }
         }
-
         pub fn sizeInBytes(self: *Self) usize {
             return self.data.len * @sizeOf(Pixel);
         }
@@ -67,7 +81,7 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
             const index = y * self.width + x;
             return switch (storage) {
                 .interleaved => self.data[index],
-                .planar => self.data.get(index),
+                .planar => self.data.get(index).p,
             };
         }
         pub fn getLuminance(self: Self, x: usize, y: usize) f32 {
@@ -81,7 +95,7 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
             const index = y * self.width + x;
             switch (storage) {
                 .interleaved => self.data[index] = value,
-                .planar => self.data.set(index, value),
+                .planar => self.data.set(index, SoAPixel{ .p = value }),
             }
         }
 
@@ -99,7 +113,7 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
             }
         }
 
-        pub fn get_histogram(self: *Self, allocator: Allocator) ![]usize {
+        pub fn getHistogram(self: *Self, allocator: Allocator) ![]usize {
             const bin_count: usize = std.math.maxInt(Self.component_type) + 1;
             var counts = try allocator.alloc(usize, bin_count);
             @memset(counts, 0);

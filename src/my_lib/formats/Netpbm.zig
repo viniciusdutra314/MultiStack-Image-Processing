@@ -127,7 +127,7 @@ pub fn saveNetbpmToWriter(image: anytype, writer: *std.Io.Writer) !void {
     const is_rgb = T.colorspace == my_lib.ColorSpace.rgb;
     const magic = if (is_rgb) "P6" else "P5";
     const max_val = std.math.maxInt(T.component_type);
-    try writer.print("{s} \n{} {} \n {} \n", .{
+    try writer.print("{s}\n{} {}\n{}\n", .{
         magic,
         image.width,
         image.height,
