@@ -1,7 +1,7 @@
 const std = @import("std");
 const my_lib = @import("../my_lib.zig");
 const Image = my_lib.Image;
-const DynamicImage = my_lib.DynamicImage;
+const ConversionPolicy = my_lib.ConversionPolicy;
 
 pub const PgmError = error{
     InvalidMagicNumber,
@@ -9,9 +9,10 @@ pub const PgmError = error{
     UnsupportedFormat,
     AllocationFailed,
     EndOfStream,
+    IncompatibleOutputImageType,
 };
 
-fn readNextToken(reader: *std.io.Reader, buf: []u8) ![]const u8 {
+fn readNextToken(reader: *std.Io.Reader, buf: []u8) ![]const u8 {
     var i: usize = 0;
     while (true) {
         const b = reader.takeByte() catch |err| switch (err) {
@@ -53,47 +54,34 @@ fn parseNextInt(reader: *std.Io.Reader, buffer: []u8) !usize {
     return std.fmt.parseInt(usize, token, 10);
 }
 
-pub fn readPgmFromReader(
+pub fn readPgmFromFilePathAs(comptime T: type, allocator: std.mem.Allocator, filepath: []const u8) !T {
+    const file = try std.fs.cwd().openFile(filepath, .{});
+    var buffer: [1024]u8 = undefined;
+    var reader_file = file.reader(&buffer);
+    return try readPgmFromReaderAs(T, allocator, &reader_file.interface);
+}
+
+pub fn readPgmFromReaderAs(
+    comptime T: type,
     allocator: std.mem.Allocator,
     reader: *std.Io.Reader,
-) !DynamicImage {
+) !T {
+    if (T.colorspace != my_lib.ColorSpace.grayscale) {
+        return PgmError.IncompatibleOutputImageType;
+    }
+
     var buffer: [64]u8 = undefined;
     const magic = try readNextToken(reader, &buffer);
-    const is_binary = if (std.mem.eql(u8, magic, "P5")) true else if (std.mem.eql(u8, magic, "P2")) false else return PgmError.InvalidMagicNumber;
+    if (!std.mem.eql(u8, magic, "P5") and !std.mem.eql(u8, magic, "P2")) {
+        return PgmError.InvalidMagicNumber;
+    }
     const width = try parseNextInt(reader, &buffer);
     const height = try parseNextInt(reader, &buffer);
     const max_val = try parseNextInt(reader, &buffer);
-
-    if (max_val < 256) {
-        var img = try Image(.grayscale, u8).init(allocator, width, height);
-        errdefer img.deinit();
-
-        if (is_binary) {
-            try reader.readSliceAll(std.mem.sliceAsBytes(img.data));
-        } else {
-            for (img.data) |*pixel| {
-                const val = try parseNextInt(reader, &buffer);
-                pixel[0] = @intCast(val);
-            }
-        }
-        return DynamicImage{ .grayscale_u8 = img };
-    } else if (max_val < 65536) {
-        var img = try Image(.grayscale, u16).init(allocator, width, height);
-        errdefer img.deinit();
-        if (is_binary) {
-            const num_pixels = width * height;
-            for (0..num_pixels) |i| {
-                const val = try parseNextInt(reader, &buffer);
-                img.data[i][0] = @intCast(val);
-            }
-        } else {
-            for (img.data) |*pixel| {
-                const val = try parseNextInt(reader, &buffer);
-                pixel[0] = @intCast(val);
-            }
-        }
-        return DynamicImage{ .grayscale_u16 = img };
-    } else {
-        return PgmError.UnsupportedFormat;
+    if (max_val > std.math.maxInt(T.component_type)) {
+        return PgmError.IncompatibleOutputImageType;
     }
+    var image = try T.init(allocator, width, height);
+    errdefer image.deinit();
+    return image;
 }

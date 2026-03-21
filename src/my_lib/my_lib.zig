@@ -6,7 +6,6 @@ pub const ColorSpace = enum {
     grayscale,
     rgb,
     rgba,
-
     pub fn channels(self: ColorSpace) usize {
         return switch (self) {
             .grayscale => 1,
@@ -16,16 +15,29 @@ pub const ColorSpace = enum {
     }
 };
 
-pub fn Image(comptime color_space: ColorSpace, comptime Component: type) type {
+pub const StorageType = enum {
+    interleaved,
+    planar,
+};
+
+pub const ConversionPolicy = enum {
+    strict,
+    scale,
+};
+
+pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptime storage: StorageType) type {
     const Pixel = [color_space.channels()]Component;
     return struct {
         const Self = @This();
-        pub const pixel_format = color_space;
+        pub const colorspace = color_space;
         pub const component_type = Component;
 
         width: usize,
         height: usize,
-        data: []Pixel,
+        data: switch (storage) {
+            .interleaved => []Pixel,
+            .planar => std.MultiArrayList(Pixel),
+        },
         allocator: Allocator,
 
         pub fn init(allocator: Allocator, width: usize, height: usize) !Self {
@@ -42,31 +54,43 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type) type {
             self.allocator.free(self.data);
         }
 
+        pub fn sizeInBytes(self: *Self) usize {
+            return self.data.len * @sizeOf(Pixel);
+        }
+
         pub fn getPixel(self: Self, x: usize, y: usize) Pixel {
             std.debug.assert(x < self.width);
             std.debug.assert(y < self.height);
-            return self.data[y * self.width + x];
+            const index = y * self.width + x;
+            return switch (storage) {
+                .interleaved => self.data[index],
+                .planar => self.data.get(index),
+            };
         }
 
-        pub fn setPixel(self: *Self, x: usize, y: usize, val: Pixel) void {
+        pub fn setPixel(self: *Self, x: usize, y: usize, value: Pixel) void {
             std.debug.assert(x < self.width);
             std.debug.assert(y < self.height);
-            self.data[y * self.width + x] = val;
+            const index = y * self.width + x;
+            switch (storage) {
+                .interleaved => self.data[index] = value,
+                .planar => self.data.set(index, value),
+            }
         }
+        // pub fn get_histogram(self: *Self,allocator:, bin_count_opt: ?usize) ![]usize {
+        //     const bin_count: usize = undefined;
+        //     if (bin_count_opt) |count| {
+        //         bin_count = count;
+        //     } else {
+        //         bin_count = 256;
+        //     }
+        // }
     };
 }
 
-pub const DynamicImage = union(enum) {
-    rgb_u8: Image(.rgb, u8),
-    rgb_u16: Image(.rgb, u16),
-    grayscale_u8: Image(.grayscale, u8),
-    grayscale_u1: Image(.grayscale, u1),
-    grayscale_u16: Image(.grayscale, u16),
-};
-
 test "Image initialization and pixel access" {
     const allocator = std.testing.allocator;
-    const RgbImage = Image(.rgb, u8);
+    const RgbImage = Image(.rgb, u8, .interleaved);
 
     var img = try RgbImage.init(allocator, 10, 10);
     defer img.deinit();
