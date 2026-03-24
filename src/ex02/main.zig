@@ -50,7 +50,7 @@ fn processImagePart(ctx: *ThreadContext) void {
     while (i < ctx.end_index) : (i += 1) {
         const val_f: f32 = @floatFromInt(ctx.original_pixels[i][0]);
         if (val_f >= ctx.threshold) {
-            const transformed = @min(@max(val_f * ctx.a + ctx.b, 0.0), 255.0);
+            const transformed = @min(@max(ctx.a * (val_f * ctx.b), 0.0), 255.0);
             const final: u8 = @intFromFloat(transformed);
             ctx.processed_pixels[i][0] = final;
             ctx.histogram[final] += 1;
@@ -125,6 +125,8 @@ pub fn main() !void {
     var a_slider: f32 = 1.0;
     var b_slider: f32 = 0.0;
     var threshold_slider: f32 = 0.0;
+    var normalize_histogram = false;
+    var equalize = false;
 
     const thread_count = std.Thread.getCpuCount() catch 4;
     const contexts = try allocator.alloc(ThreadContext, thread_count);
@@ -170,15 +172,36 @@ pub fn main() !void {
             std.debug.print("Avg processing time ({d} threads): {d:.4} ms\n", .{ thread_count, total_time / @as(f64, @floatFromInt(iterations)) });
         }
 
-        rl.updateTexture(texture, processed_img.getSlice().ptr);
-
         rl.beginDrawing();
         rl.clearBackground(.ray_white);
+
+        var max_hist: usize = 0;
+        var total_pixels: usize = 0;
+        for (histogram) |h| {
+            if (h > max_hist) {
+                max_hist = h;
+            }
+            total_pixels += h;
+        }
+        var cdf = [_]f32{0.0} ** 256;
+        if (total_pixels > 0) {
+            var sum: usize = 0;
+            for (0..256) |i| {
+                sum += histogram[i];
+                cdf[i] = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(total_pixels));
+            }
+        }
+        if (equalize) {
+            for (processed_img.getSliceMut()) |*pixel| {
+                pixel[0] = @intFromFloat(cdf[pixel[0]] * 255.0);
+            }
+        }
+        rl.updateTexture(texture, processed_img.getSlice().ptr);
 
         const screen_w: f32 = @floatFromInt(rl.getScreenWidth());
         const screen_h: f32 = @floatFromInt(rl.getScreenHeight());
         const section_w = screen_w / 3.0;
-        const screen_padding: f32 = 30.0;
+        const screen_padding: f32 = 80.0;
         const scale = @min((section_w - 60.0) / @as(f32, @floatFromInt(original_img.width)), (screen_h * 0.5) / @as(f32, @floatFromInt(original_img.height)));
         const display_w = @as(f32, @floatFromInt(original_img.width)) * scale;
         const display_h = @as(f32, @floatFromInt(original_img.height)) * scale;
@@ -187,16 +210,37 @@ pub fn main() !void {
         rl.drawText("Original", @intFromFloat(section_w + screen_padding), 20, 24, rl.Color.black);
         rl.drawTexturePro(texture, .{ .x = 0, .y = 0, .width = @floatFromInt(texture.width), .height = @floatFromInt(texture.height) }, .{ .x = (section_w * 2) + (section_w - display_w) / 2, .y = 60, .width = display_w, .height = display_h }, .{ .x = 0, .y = 0 }, 0, .white);
         rl.drawText("Processada", @intFromFloat(section_w * 2.0 + screen_padding), 20, 24, rl.Color.black);
-        var max_hist: usize = 0;
-        for (histogram) |h| if (h > max_hist) {
-            max_hist = h;
-        };
-        const hist_x: f32 = 30;
+
+        const hist_x: f32 = screen_padding;
         const hist_h: f32 = screen_h * 0.5;
+        const hist_y: f32 = 60;
         const hist_w: f32 = section_w - 60;
 
         rl.drawText("Histograma", @intFromFloat(hist_x), 20, 24, rl.Color.black);
         rl.drawRectangleLinesEx(.{ .x = hist_x, .y = 60, .width = hist_w, .height = hist_w }, 2, rl.Color.gray);
+        const label_count = 10;
+        for (0..label_count) |i| {
+            const val = i * (255 / (label_count - 1));
+            var buf: [4:0]u8 = undefined;
+            const text = try std.fmt.bufPrintZ(&buf, "{d}", .{val});
+            const x_pos = hist_x + (@as(f32, @floatFromInt(val)) / 256.0) * hist_w;
+            rl.drawText(text, @intFromFloat(x_pos - 10), @intFromFloat(hist_y + hist_h + 5), 16, rl.Color.black);
+        }
+        const y_label_count = 5;
+        for (0..y_label_count) |i| {
+            var buf: [16:0]u8 = undefined;
+            const text = if (normalize_histogram and total_pixels > 0) blk: {
+                const prob = (@as(f32, @floatFromInt(max_hist)) / @as(f32, @floatFromInt(total_pixels))) * (@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(y_label_count - 1)));
+                break :blk try std.fmt.bufPrintZ(&buf, "{d:.3}", .{prob});
+            } else blk: {
+                const val = (max_hist * i) / (y_label_count - 1);
+                break :blk try std.fmt.bufPrintZ(&buf, "{d}", .{val});
+            };
+
+            const y_pos = (hist_y + hist_h) - (@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(y_label_count - 1))) * hist_h;
+            const text_w = rl.measureText(text, 12);
+            rl.drawText(text, @intFromFloat(hist_x - @as(f32, @floatFromInt(text_w)) - 5), @intFromFloat(y_pos - 6), 12, rl.Color.black);
+        }
 
         for (histogram, 0..) |count, i| {
             if (count == 0 or max_hist == 0) continue;
@@ -219,8 +263,19 @@ pub fn main() !void {
             a_slider = 1.0;
             b_slider = 0.0;
             threshold_slider = 0.0;
+            normalize_histogram = false;
+            equalize = false;
         }
 
+        const pdf_btn_text = if (normalize_histogram) "Modo: Histograma (Normalizado)" else "Modo: Contagem (Frequência)";
+        if (rg.button(.{ .x = slider_x, .y = start_y + 160, .width = section_w, .height = 30 }, pdf_btn_text)) {
+            normalize_histogram = !normalize_histogram;
+        }
+        const equalize_text = if (equalize) "Equalizado" else "Não equalizado";
+
+        if (rg.button(.{ .x = slider_x, .y = start_y + 200, .width = section_w, .height = 30 }, equalize_text)) {
+            equalize = !equalize;
+        }
         rl.endDrawing();
     }
 }
