@@ -1,5 +1,8 @@
 const std = @import("std");
-pub const Netpbm = @import("formats//Netpbm.zig");
+pub const Netpbm = @import("image_formats/Netpbm.zig");
+pub const my_math = @import("math.zig");
+pub const DynamicMatrix = my_math.DynamicMatrix;
+pub const StaticMatrix = my_math.StaticMatrix;
 const Allocator = std.mem.Allocator;
 
 pub const ColorSpace = enum {
@@ -42,16 +45,16 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
         width: usize,
         height: usize,
         data: switch (storage) {
-            .interleaved => []Pixel,
+            .interleaved => my_math.DynamicMatrix(Pixel),
             .planar => std.MultiArrayList(SoAPixel),
         },
 
-        pub fn init(allocator: Allocator, width: usize, height: usize) !Self {
+        pub fn init(gpa: Allocator, width: usize, height: usize) !Self {
             return switch (storage) {
-                .interleaved => Self{ .width = width, .height = height, .data = try allocator.alloc(Pixel, width * height) },
+                .interleaved => Self{ .width = width, .height = height, .data = try my_math.DynamicMatrix(Pixel).init(gpa, width, height) },
                 .planar => {
                     var data = std.MultiArrayList(SoAPixel){};
-                    try data.ensureTotalCapacity(allocator, width * height);
+                    try data.ensureTotalCapacity(gpa, width * height);
                     data.len = width * height;
                     return Self{
                         .width = width,
@@ -62,26 +65,34 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
             };
         }
 
-        pub fn deinit(self: Self, allocator: Allocator) void {
+        pub fn deinit(self: Self, gpa: Allocator) void {
             switch (storage) {
-                .interleaved => allocator.free(self.data),
+                .interleaved => self.data.deinit(gpa),
                 .planar => {
                     var mutable_data = self.data;
-                    mutable_data.deinit(allocator);
+                    mutable_data.deinit(gpa);
                 },
             }
         }
 
+        pub fn convolve(self: Self, allocator: std.mem.Allocator, kernel: anytype) !Self {
+            return Self{ .data = try self.data.convolve(allocator, kernel), .height = self.height, .width = self.width };
+        }
+
+        pub fn rotate180(self: *Self) void {
+            self.data.rotate180();
+        }
+
         pub fn getSliceMut(self: Self) []Pixel {
             return switch (storage) {
-                .interleaved => self.data,
+                .interleaved => self.data.asSliceMut(),
                 .planar => @compileError("Não existe um buffer único no caso planar"),
             };
         }
 
         pub fn getSlice(self: Self) []const Pixel {
             return switch (storage) {
-                .interleaved => self.data,
+                .interleaved => self.data.asSlice(),
                 .planar => @compileError("Não existe um buffer único no caso planar"),
             };
         }
@@ -91,12 +102,9 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
         }
 
         pub fn getPixel(self: Self, x: usize, y: usize) Pixel {
-            std.debug.assert(x < self.width);
-            std.debug.assert(y < self.height);
-            const index = y * self.width + x;
             return switch (storage) {
-                .interleaved => self.data[index],
-                .planar => self.data.get(index).p,
+                .interleaved => self.data.get(x, y),
+                .planar => self.data.get(y * self.width + x).p,
             };
         }
         pub fn getLuminance(self: Self, x: usize, y: usize) f32 {
@@ -105,12 +113,9 @@ pub fn Image(comptime color_space: ColorSpace, comptime Component: type, comptim
         }
 
         pub fn setPixel(self: *Self, x: usize, y: usize, value: Pixel) void {
-            std.debug.assert(x < self.width);
-            std.debug.assert(y < self.height);
-            const index = y * self.width + x;
             switch (storage) {
-                .interleaved => self.data[index] = value,
-                .planar => self.data.set(index, SoAPixel{ .p = value }),
+                .interleaved => self.data.set(x, y, value),
+                .planar => self.data.set(y * self.width + x, SoAPixel{ .p = value }),
             }
         }
 
