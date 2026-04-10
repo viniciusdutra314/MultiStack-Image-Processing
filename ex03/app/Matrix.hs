@@ -1,5 +1,6 @@
 module Matrix
   ( Matrix,
+    Matrix (..),
     getElement,
     createMatrixWithValue,
     createMatrixWithFunc,
@@ -14,7 +15,20 @@ data Matrix a = Matrix
     matrixCols :: !Word,
     matrixElements :: !(U.Vector a)
   }
-  deriving (Show)
+
+instance (Show a, U.Unbox a) => Show (Matrix a) where
+  show (Matrix rows cols elements) =
+    "Matrix "
+      ++ show rows
+      ++ "x"
+      ++ show cols
+      ++ "\n"
+      ++ unlines
+        [ show (U.slice start len elements)
+          | i <- [0 .. rows - 1],
+            let start = fromIntegral (i * cols),
+            let len = fromIntegral cols
+        ]
 
 createMatrixWithValue :: (U.Unbox a) => (Word, Word) -> a -> Matrix a
 createMatrixWithValue (rows, cols) val = Matrix rows cols (U.replicate (fromIntegral (rows * cols)) val)

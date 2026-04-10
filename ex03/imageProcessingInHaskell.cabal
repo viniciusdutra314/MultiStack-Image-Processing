@@ -59,16 +59,15 @@ executable imageProcessingInHaskell
     main-is:          Main.hs
     -- Modules included in this executable, other than Main.
     other-modules:
-        Matrix
+        Matrix,
+        PGM
     -- LANGUAGE extensions used by modules in this package.
     other-extensions:
         LambdaCase
     -- Other library packages from which modules are imported.
     build-depends:    base ^>=4.18.3.0,
-                      massiv,
-                      massiv-io,
-                      Color,
-                      vector
+                      vector,
+                      bytestring
     -- Directories containing source files.
     hs-source-dirs:   app
     default-language: GHC2021
