@@ -1,30 +1,44 @@
-import Data.Massiv.Array
-import Data.Massiv.Array.IO
+{-# LANGUAGE LambdaCase #-}
 
-imgSize :: Sz2
-imgSize = Sz2 512 512
+import Data.Word
+import Matrix
 
-mid :: Int
-mid = 512 `div` 2
+-- import Data.Massiv.Array as A
+-- import Data.Massiv.Array.IO
+-- import Data.Massiv.Array.Stencil
+-- import Matrix
 
-black :: Pixel (Y D65) Word8
-black = PixelY 0
+-- type GrayPixel = Pixel (Y D65)
 
-white :: Pixel (Y D65) Word8
-white = PixelY 255
+-- type GrayU8 = GrayPixel Word8
 
-checkboard :: Array U Ix2 (Pixel (Y D65) Word8)
+-- type GrayF32 = GrayPixel Float
+
+-- imgToDouble :: Array U Ix2 GrayU8 -> Array D Ix2 GrayF32
+-- imgToDouble = A.map (fmap fromIntegral)
+
+checkboard :: Matrix Word8
 checkboard =
-  makeArray
-    Seq
-    imgSize
-    ( \(i :. j) ->
-        if (i < mid && j < mid) || (i >= mid && j >= mid)
-          then black
-          else
-            white
+  createMatrixWithFunc
+    (512, 512)
+    ( \case
+        (i, j)
+          | sameSide i j -> black
+          | otherwise -> white
     )
+  where
+    sameSide i j = (i < mid && j < mid) || (i >= mid && j >= mid)
+    white = 255
+    black = 0
+    mid = 512 `div` 2
+
+-- meanKernel :: Array U Ix2 Double
+-- meanKernel = makeArray Seq (Sz (30 :. 30)) (\_ -> 1.0 / (30.0 * 30.0))
+
+-- blurStencil = makeConvolutionStencilFromKernel meanKernel
+
+-- blurConvolution = mapStencil (Fill 0) blurStencil
 
 main :: IO ()
 main = do
-  writeImage "checkboard.png" checkboard
+  print checkboard
