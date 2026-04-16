@@ -54,6 +54,15 @@ pub fn complex_to_logged_gray(array: &Array2<Complex64>) -> image::GrayImage {
     img
 }
 
+pub fn complex_to_clamped_gray(array: &Array2<Complex64>) -> image::GrayImage {
+    let (width, height) = array.dim();
+    let img = image::GrayImage::from_fn(width as u32, height as u32, |x, y| {
+        let mag = clamp(0.0, 255.0, array[(x as usize, y as usize)].re);
+        image::Luma([mag as u8])
+    });
+    img
+}
+
 pub fn fftshift2(input: &Array2<Complex64>) -> Array2<Complex64> {
     let (width, height) = input.dim();
     Array2::<Complex64>::from_shape_fn((width, height), |(x, y)| {
@@ -61,4 +70,8 @@ pub fn fftshift2(input: &Array2<Complex64>) -> Array2<Complex64> {
         let ny = (y + height / 2) % height;
         input[(nx, ny)]
     })
+}
+
+pub fn clamp(min: f64, max: f64, value: f64) -> f64 {
+    f64::max(min, f64::min(max, value))
 }

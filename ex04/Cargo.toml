@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-image = "0.25.10"
-ndarray = "0.17.2"
-ndrustfft = "0.6.2"
-num-complex = "0.4.6"
-rustfft = "6.4.1"
+image = { version = "0.25.10", default-features = false,features=["jpeg"]  }
+ndarray = {version="0.17.2", default-features = false}
+ndrustfft = {version="0.6.2", default-features = false}
+num-complex = {version="0.4.6", default-features = false}
+rustfft = {version="6.4.1", default-features = false}
+
+[profile.dev]
+opt-level = 2
+debug = true
