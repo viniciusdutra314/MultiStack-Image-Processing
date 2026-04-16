@@ -6,3 +6,4 @@ To improve my programming skills, each exercise in this Image Processing course 
 | ex01 (Histogram) | C |
 | ex02 (Linear Transformation) | Zig |
 | ex03 (Small Kernel Convolution) | Haskell |
+| ex04 (Fourier Transform) | Rust

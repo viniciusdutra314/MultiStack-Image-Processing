@@ -1,0 +1,11 @@
+[package]
+name = "ex04"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+image = "0.25.10"
+ndarray = "0.17.2"
+ndrustfft = "0.6.2"
+num-complex = "0.4.6"
+rustfft = "6.4.1"
