@@ -7,3 +7,4 @@ To improve my programming skills, each exercise in this Image Processing course 
 | ex02 (Linear Transformation) | Zig |
 | ex03 (Small Kernel Convolution) | Haskell |
 | ex04 (Fourier Transform) | Rust
+| Final Assignment | Julia |
