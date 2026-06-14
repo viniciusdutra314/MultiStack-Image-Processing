@@ -5,8 +5,7 @@ using Markdown
 using InteractiveUtils
 
 # ╔═╡ ed7ee220-6759-11f1-a80e-0d481562c77e
-using Images ,CairoMakie,FITSIO,ImageFiltering,Statistics
-
+using Images ,ImageContrastAdjustment,ImageFiltering,CairoMakie,FITSIO,Statistics
 
 # ╔═╡ 0f5c4e64-dad0-448a-a576-77adb7658db9
 md"
@@ -15,55 +14,25 @@ ee
 
 # ╔═╡ d79e7fc2-56df-4265-be72-f910386eed10
 begin
-	f = FITS("hlsp_heritage_hst_wfc3-uvis_m16_f502n_v1_drz.fits")
-	img=log1p.(max.(read(f[1])[:,:],0))
-	min_val=minimum(img)
-	max_val=maximum(img)
-	linear_img=(img.- min_val)./(max_val.-min_val)
-	gamma=0.3
-	img=linear_img .^ gamma
-	Gray.(rotl90(img))
-end
+    function pre_process(path, peso)
+        f = FITS(path)
+        img_bruta = max.(read(f[1])[:,:], 0.0)
+        close(f)
+        img_stretch = asinh.(img_bruta .* peso)    
+        min_val = minimum(img_stretch)
+        max_val = maximum(img_stretch)
+        linear_img = (img_stretch .- min_val) ./ (max_val - min_val)
+        gamma=0.5
+        return rotl90(linear_img.^gamma)
+    end
+    
+    R = pre_process("hlsp_heritage_hst_wfc3-uvis_m16_f673n_v1_drz.fits", 15.0) 
+    G = pre_process("hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits", 2.0)   
+    B = pre_process("hlsp_heritage_hst_wfc3-uvis_m16_f502n_v1_drz.fits", 100.0) 
 
-# ╔═╡ 1e6c66c0-37a7-4e82-a963-7717f55a3fb3
-let
-	# 1. Lê a imagem
-	f = FITS("image.fits")
-	img_bruta = read(f[1])[:,:]
-	close(f)
-	
-	# 2. Normaliza a imagem entre 0.0 e 1.0 (Filtros prontos preferem imagens assim)
-	min_val = minimum(img_bruta)
-	max_val = maximum(img_bruta)
-	img_norm = (img_bruta .- min_val) ./ (max_val - min_val)
-	img_norm = clamp.(img_norm, 0.0, 1.0) # Garante que nada passe de 1.0
-	
-	# ==============================================================
-	# TESTANDO OS FILTROS PRONTOS DA BIBLIOTECA
-	# ==============================================================
-	
-	# TESTE 1: Filtro Gaussiano (O clássico "Blur" de editores de imagem)
-	# O "2.0" é a força do filtro. Quanto maior, mais borrado.
-	img_gaussiana = imfilter(img_norm, Kernel.gaussian(2.0))
-	
-	# TESTE 2: Filtro de Mediana
-	# Ele olha para uma "janela" de 5x5 pixels ao redor de cada pixel e pega o valor do meio.
-	# É famoso por preservar bordas melhor que o Gaussiano.
-	img_mediana = mapwindow(median, img_norm, (5, 5))
-	
-	# ==============================================================
-	# VISUALIZAÇÃO (Aplicando o Stretch para os nossos olhos)
-	# ==============================================================
-	fator_gamma = 0.5
-	
-	img_visivel_original = img_norm .^ fator_gamma
-	img_visivel_gauss    = img_gaussiana .^ fator_gamma
-	img_visivel_mediana  = img_mediana .^ fator_gamma
-	
-	# Exiba uma de cada vez no seu Julia para comparar:
-	crop_x=100:200
-	crop_y=100:200
-	  [Gray.(img_visivel_original[crop_x,crop_y]) Gray.(img_visivel_gauss[crop_x,crop_y]) Gray.(img_visivel_mediana[crop_x,crop_y])]
+    img=colorview(RGB, R, G, B)
+    save("pilares_da_criação.jpeg",img)
+    
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -71,6 +40,7 @@ PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 FITSIO = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
+ImageContrastAdjustment = "f332f351-ec65-5f6a-b3d1-319c6670881a"
 ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
@@ -78,6 +48,7 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 [compat]
 CairoMakie = "~0.15.11"
 FITSIO = "~0.17.5"
+ImageContrastAdjustment = "~0.3.13"
 ImageFiltering = "~0.7.12"
 Images = "~0.26.2"
 """
@@ -88,7 +59,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "7eb38ed9a0f65bcc3a565136e96ea8110bbb25e9"
+project_hash = "48626785a334722cd065e9616a2a743823a0b4f7"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -2172,6 +2143,5 @@ version = "4.1.0+0"
 # ╠═0f5c4e64-dad0-448a-a576-77adb7658db9
 # ╠═ed7ee220-6759-11f1-a80e-0d481562c77e
 # ╠═d79e7fc2-56df-4265-be72-f910386eed10
-# ╠═1e6c66c0-37a7-4e82-a963-7717f55a3fb3
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
