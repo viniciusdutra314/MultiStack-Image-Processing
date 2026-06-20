@@ -9,30 +9,113 @@ using Images ,ImageContrastAdjustment,ImageFiltering,CairoMakie,FITSIO,Statistic
 
 # ╔═╡ 0f5c4e64-dad0-448a-a576-77adb7658db9
 md"
-ee
+# Introdução 
+
+Neste trabalho, analisaremos o impacto e o tratamento do **Ruído de Poisson** (também conhecido como *Shot Noise* ou *Ruído de Fóton*) em dados astronômicos reais. Iremos utilizar dados reais em formato **.FITS** (*Flexible Image Transport System*) obtidos diretamente do arquivo público do **Telescópio Espacial Hubble (HST)**, usaremos como exemplo a Nebulosa da Águia ou também chamada de Pilares da Criação.
+"
+
+# ╔═╡ 25429817-6043-48ba-9269-fabe475cb2dd
+md"
+# Ruído de Poisson
+A chegada de fótons em um sensor é um fenômeno probabilístico quântico,
+dada uma certa probabilidade ``\lambda`` para que um foton chegue no sensor
+em um dado intervalo de tempo, a probabilidade de $k$ fótons atinja o sensor 
+é dado por
+```math
+\frac{\lambda^k e^{-k}}{k!}
+```
+
+Algo interessante dessa distribuição é que só existe um paramêtro livre, o que
+faz com que a média ``\mu=\lambda`` e o desvio padrão ``\sigma=\sqrt{\lambda}`` estejam relacionados, ``\mu =\sigma^2=\lambda``. Com isso é possível calcular o coeficiente de variação 
+``` math
+\frac{\sigma}{\mu}=\frac{1}{\sqrt{\lambda}}
+```
+
+Isso significa que para valores pequenos de ``\lambda``, a quantidade fotóns (intensidade da imagem) tem uma variação grande, enquanto para partes claras a variação é pequena
+
+
+"
+
+# ╔═╡ deaf2b67-bdf0-46d7-91c4-60f7745a0161
+md"
+### Caracterização Estatística e Física do Ruído de Poisson
+
+| Critério Solicitado | Classificação / Característica |
+| :--- | :--- |
+| **Tipo de Distribuição** | Distribuição de Poisson |
+| **Aleatório ou Sistemático** | Aleatório (Estocástico) |
+| **Correlação Espacial** | Não apresenta (Independente por pixel) |
+| **Estacionaridade** | Não-Estacionário |
+| **Homoscedástico ou Heterocedástico** | Heterocedástico 
 "
 
 # ╔═╡ d79e7fc2-56df-4265-be72-f910386eed10
 begin
-    function pre_process(path, peso)
-        f = FITS(path)
-        img_bruta = max.(read(f[1])[:,:], 0.0)
-        close(f)
-        img_stretch = asinh.(img_bruta .* peso)    
-        min_val = minimum(img_stretch)
-        max_val = maximum(img_stretch)
-        linear_img = (img_stretch .- min_val) ./ (max_val - min_val)
-        gamma=0.5
-        return rotl90(linear_img.^gamma)
+    function read_fits(path)
+        f=FITS(path)
+        Gray.(max.(read(f[1])[:,:],0.0))
     end
-    
-    R = pre_process("hlsp_heritage_hst_wfc3-uvis_m16_f673n_v1_drz.fits", 15.0) 
-    G = pre_process("hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits", 2.0)   
-    B = pre_process("hlsp_heritage_hst_wfc3-uvis_m16_f502n_v1_drz.fits", 100.0) 
+    R = read_fits("hlsp_heritage_hst_wfc3-uvis_m16_f673n_v1_drz.fits")
+    G = read_fits("hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")  
+    B = read_fits("hlsp_heritage_hst_wfc3-uvis_m16_f502n_v1_drz.fits")
+    colorview(RGB, R ./ maximum(R), G ./ maximum(G), B ./ maximum(B))
+end
 
-    img=colorview(RGB, R, G, B)
-    save("pilares_da_criação.jpeg",img)
+# ╔═╡ b07dd50e-f804-4132-b8a5-d55483e7302c
+begin
+    function pre_process(img_bruta, peso)
+            img_stretch = asinh.(img_bruta .* peso)    
+            min_val = minimum(img_stretch)
+            max_val = maximum(img_stretch)
+            linear_img = (img_stretch .- min_val) ./ (max_val - min_val)
+            gamma=0.5
+            return rotl90(linear_img.^gamma)
+    end
+    colorview(RGB,pre_process(R,15.0),pre_process(G,2.0),pre_process(B,100.0))
+
+end
+
+# ╔═╡ c55a9016-a39d-46b7-8b50-a1af176dd100
+begin
+    # G é o canal bruto linear (ex: max.(read(f[1]), 0.0))
+    cropped = G 
+
+    function remover_ruido_poisson_linear(img; σ_gaussiano=1.0)
+        # Transforma os dados em Float puro (preservando a escala original de contagem de fótons)
+        img_float = Float64.(channelview(img))
+        
+        # 1. Transformada Direta de Anscombe
+        img_anscombe = 2.0 .* sqrt.(max.(img_float .+ (3/8), 0.0))
+        
+        # 2. Filtragem espacial (Filtro Gaussiano)
+        img_filtrada_anscombe = imfilter(img_anscombe, Kernel.gaussian(σ_gaussiano))
+        
+        # 3. Transformada Inversa Algébrica
+        img_recuperada = (img_filtrada_anscombe ./ 2.0).^2 .- (3/8)
+        
+        # CORREÇÃO: Não usamos clamp(0,1) aqui porque os dados brutos legítimos 
+        # do Hubble ultrapassam muito o valor 1. Apenas garantimos que não há negativos.
+        img_recuperada = max.(img_recuperada, 0.0)
+        
+        return img_recuperada
+    end
+
+    # Roda a filtragem no domínio linear correto
+    removed_poisson_linear = remover_ruido_poisson_linear(cropped)
+
+    # Agora sim a subtração do ruído isolado faz sentido na escala original!
+    noise = Float64.(channelview(cropped)) .- removed_poisson_linear
+
+    # --- Gerando os Gráficos ---
+    fig = Figure(size = (900, 400))
     
+    ax_img = CairoMakie.Axis(fig[1, 1]; yscale = log10, title = "Sinal Original Bruto", xlabel = "Contagem de Fótons")
+    ax_noise = CairoMakie.Axis(fig[1, 2]; yscale = log10, title = "Ruído de Poisson Isolado", xlabel = "Amplitude do Ruído")
+    
+    hist!(ax_img, Float64.(channelview(cropped))[:]; bins = 50, color = :blue)
+    hist!(ax_noise, noise[:]; bins = 50, color = :red)
+    
+    fig
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2140,8 +2223,12 @@ version = "4.1.0+0"
 """
 
 # ╔═╡ Cell order:
-# ╠═0f5c4e64-dad0-448a-a576-77adb7658db9
+# ╟─0f5c4e64-dad0-448a-a576-77adb7658db9
 # ╠═ed7ee220-6759-11f1-a80e-0d481562c77e
+# ╟─25429817-6043-48ba-9269-fabe475cb2dd
+# ╟─deaf2b67-bdf0-46d7-91c4-60f7745a0161
 # ╠═d79e7fc2-56df-4265-be72-f910386eed10
+# ╠═b07dd50e-f804-4132-b8a5-d55483e7302c
+# ╠═c55a9016-a39d-46b7-8b50-a1af176dd100
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
