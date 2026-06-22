@@ -17,13 +17,21 @@ macro bind(def, element)
 end
 
 # ╔═╡ ed7ee220-6759-11f1-a80e-0d481562c77e
-using Images ,ImageContrastAdjustment,ImageFiltering,CairoMakie,FITSIO,Statistics,Distributions,PlutoUI
+using Images ,ImageFiltering,CairoMakie,FITSIO,Statistics,Distributions,PlutoUI
+
+# ╔═╡ a33c9a67-4d7a-484c-88eb-0b1aa760dcce
+# ╠═╡ show_logs = false
+begin
+	using PythonCall,CondaPkg
+	CondaPkg.add("numpy")
+	CondaPkg.add_pip("bm3d")
+end
 
 # ╔═╡ 0f5c4e64-dad0-448a-a576-77adb7658db9
 md"
 # Introdução 
 
-Neste trabalho, analisaremos o impacto e o tratamento do **Ruído de Poisson** (também conhecido como *Shot Noise* ou *Ruído de Fóton*) em dados astronômicos reais. Iremos utilizar dados reais em formato **.FITS** (*Flexible Image Transport System*) obtidos diretamente do arquivo público do **Telescópio Espacial Hubble (HST)**, usaremos como exemplo a Nebulosa da Águia ou também chamada de Pilares da Criação.
+Neste trabalho, analisaremos o impacto e o tratamento do **Ruído de Poisson** (também conhecido como *Shot Noise* ou *Ruído de Fóton*) em dados astronômicos reais. Iremos utilizar dados reais em formato **.FITS** (*Flexible Image Transport System*) obtidos diretamente do arquivo público do [Chandra X-ray ](https://chandra.harvard.edu/photo/openFITS/xray_data.html), usaremos como exemplo a supernova de Tycho.
 "
 
 # ╔═╡ 25429817-6043-48ba-9269-fabe475cb2dd
@@ -56,13 +64,58 @@ md"
 | :--- | :--- |
 | **Tipo de Distribuição** | Distribuição de Poisson |
 | **Aleatório ou Sistemático** | Aleatório (Estocástico) |
-| **Correlação Espacial** | Não apresenta (Independente por pixel) |
+| **Correlação Espacial** | Não apresenta  |
 | **Estacionaridade** | Não-Estacionário |
 | **Homoscedástico ou Heterocedástico** | Heterocedástico 
 "
 
+# ╔═╡ 39317222-2672-47a1-8a7e-0e6b8dea0d97
+md"## Exemplos de imagens com ruído de Poisson"
+
+# ╔═╡ b07dd50e-f804-4132-b8a5-d55483e7302c
+begin
+    function read_fits(path)
+         f=FITS(path)
+         Gray.(max.(read(f[1])[:,:],0.0))
+    end
+
+    function pre_process(img_bruta)
+            img_stretch = asinh.(img_bruta)    
+            min_val = minimum(img_stretch)
+            max_val = maximum(img_stretch)
+            linear_img = (img_stretch .- min_val) ./ (max_val - min_val)
+            gamma=0.5
+            return rotl90(linear_img.^gamma)
+    end
+    R = read_fits("tycho_4100-6100eV.fits")
+    G = read_fits("tycho_1630-2260eV.fits")  
+    B = read_fits("tycho_950-1260eV.fits")
+    colorview(RGB,pre_process(R),pre_process(G),pre_process(B))
+
+end
+
+# ╔═╡ fb01c82c-8009-4a40-b773-4b3fcc99b8cd
+md"## Metódo de remoção do ruído
+
+> *“Se você não consegue resolver o problema proposto, tente resolver um problema relacionado mais simples*
+> 
+> — **George Pólya** (1887-1985)
+
+"
+
 # ╔═╡ f9550483-6127-4b1b-b334-cb2b0d9a0762
-md"## Transformada de Anscombe"
+md"
+#### Transformada de Anscombe
+[paper original de 1948 ](https://www.jstor.org/stable/pdf/2332343?casa_token=YXg7fsghNYAAAAAA:WkJbje6KVjbneYRx68r31BV3v9F60XEmAtYIeHLjn2jWKUs_M2PLEcayLXO2ul6MI-hXzdwKZjmq5wqmppsnYCwBLExB4DmehpAenwgIXi7TDPcHHQ)
+
+```math
+
+X \sim \text{Poisson}(\mu) \xrightarrow[\text{Transformada de Anscombe}]{\quad f(X) = 2\sqrt{X + 3/8} \quad} Y \approx \mathcal{N}(2\sqrt{\mu}, 1)
+```
+
+
+
+"
 
 # ╔═╡ 9d6815d3-958a-4efa-ad00-2ee5e84d62ae
 md"``\mu``:"
@@ -77,6 +130,8 @@ begin
     dist_poisson = Distributions.Poisson(μ)
     sampled_poisson = rand(dist_poisson, samples)
     anscombe_transform(x) = 2 * sqrt(x + 3/8)
+    anscombe_inverse_transform(x) = (x / 2)^2 - 3/8
+    
     transformed_poisson=anscombe_transform.(sampled_poisson)
     fig = Figure(size = (1000, 500))
     
@@ -99,52 +154,54 @@ begin
     fig
 end
 
-# ╔═╡ d79e7fc2-56df-4265-be72-f910386eed10
+# ╔═╡ 034d74fe-1847-41bf-a69c-e67622512d68
 begin
-    function read_fits(path)
-        f=FITS(path)
-        Gray.(max.(read(f[1])[:,:],0.0))
+    const py_bm3d = pyimport("bm3d")
+    const np = pyimport("numpy")
+    function denoise_bm3d_anscombe(img_raw)
+        img_anscombe = 2.0 .* sqrt.(img_raw .+ 3/8)
+        py_matrix = np.array(img_anscombe)
+        py_filtered = py_bm3d.bm3d(
+            py_matrix, 
+            sigma_psd = 1.0, 
+        )
+        
+        img_filtrada = pyconvert(Matrix{Float64}, py_filtered)
+        PythonCall.GC.gc()
+        GC.gc() 
+        img_limpa = (img_filtrada ./ 2.0).^2 .- 3/8
+        return img_limpa
     end
-    R = read_fits("hlsp_heritage_hst_wfc3-uvis_m16_f673n_v1_drz.fits")
-    G = read_fits("hlsp_heritage_hst_wfc3-uvis_m16_f657n_v1_drz.fits")  
-    B = read_fits("hlsp_heritage_hst_wfc3-uvis_m16_f502n_v1_drz.fits")
-    colorview(RGB, R ./ maximum(R), G ./ maximum(G), B ./ maximum(B))
-end
-
-# ╔═╡ b07dd50e-f804-4132-b8a5-d55483e7302c
-begin
-    function pre_process(img_bruta, peso)
-            img_stretch = asinh.(img_bruta .* peso)    
-            min_val = minimum(img_stretch)
-            max_val = maximum(img_stretch)
-            linear_img = (img_stretch .- min_val) ./ (max_val - min_val)
-            gamma=0.5
-            return rotl90(linear_img.^gamma)
+    canais_processados = map([R, G, B]) do img
+        img_f64 = Float64.(img)
+        img_denoised = pre_process(denoise_bm3d_anscombe(img_f64))
+        return img_denoised
     end
-    colorview(RGB,pre_process(R,15.0),pre_process(G,2.0),pre_process(B,100.0))
-
+    colorview(RGB, canais_processados...)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 FITSIO = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
-ImageContrastAdjustment = "f332f351-ec65-5f6a-b3d1-319c6670881a"
 ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
 CairoMakie = "~0.15.11"
+CondaPkg = "~0.2.36"
 Distributions = "~0.25.126"
 FITSIO = "~0.17.5"
-ImageContrastAdjustment = "~0.3.13"
 ImageFiltering = "~0.7.12"
 Images = "~0.26.2"
 PlutoUI = "~0.7.83"
+PythonCall = "~0.9.34"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -153,7 +210,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "fdd28782656e1f6f0e1221e5646259e26f867823"
+project_hash = "fc0ee56f628d7a2764d0e4b932ba2822e154d226"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -469,6 +526,12 @@ deps = ["Observables", "Preferences"]
 git-tree-sha1 = "7bc84b769c1d384315e7b5c4ac03a6c303e6cf35"
 uuid = "95dc2771-c249-4cd0-9c9f-1f3b4330693c"
 version = "0.1.8"
+
+[[deps.CondaPkg]]
+deps = ["JSON", "Markdown", "MicroMamba", "Pidfile", "Pkg", "Preferences", "Scratch", "TOML", "pixi_jll"]
+git-tree-sha1 = "2b1afb8ae65a0758795b00adafb37f97e67ef0e9"
+uuid = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
+version = "0.2.36"
 
 [[deps.ConstructionBase]]
 git-tree-sha1 = "b4b092499347b18a015186eae3042f72267106cb"
@@ -1355,6 +1418,12 @@ git-tree-sha1 = "3a8f462a180a9d735e340f4e8d5f364d411da3a4"
 uuid = "626554b9-1ddb-594c-aa3c-2596fe9399a5"
 version = "0.8.1"
 
+[[deps.MicroMamba]]
+deps = ["Pkg", "Scratch", "micromamba_jll"]
+git-tree-sha1 = "535656ce55266bfed0575cd051acc4f36dc869a0"
+uuid = "0b3b1443-0f03-428d-bdfb-f27f9c1191ea"
+version = "0.1.15"
+
 [[deps.Missings]]
 deps = ["DataAPI"]
 git-tree-sha1 = "ec4f7fbeab05d7747bdf98eb74d130a2a2ed298d"
@@ -1529,6 +1598,12 @@ git-tree-sha1 = "468dbe2b510c876dc091b2c74ed52c7c34f48b9b"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.8.5"
 
+[[deps.Pidfile]]
+deps = ["FileWatching", "Test"]
+git-tree-sha1 = "2d8aaf8ee10df53d0dfb9b8ee44ae7c04ced2b03"
+uuid = "fa939f87-e72e-5be4-a000-7fc836dbe307"
+version = "1.3.0"
+
 [[deps.Pixman_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl"]
 git-tree-sha1 = "e4a6721aa89e62e5d4217c0b21bd714263779dda"
@@ -1626,6 +1701,20 @@ version = "1.11.0"
 git-tree-sha1 = "4fbbafbc6251b883f4d2705356f3641f3652a7fe"
 uuid = "43287f4e-b6f4-7ad1-bb20-aadabca52c3d"
 version = "1.4.0"
+
+[[deps.PythonCall]]
+deps = ["CondaPkg", "Dates", "Libdl", "MacroTools", "Markdown", "Preferences", "Serialization", "Tables", "UnsafePointers"]
+git-tree-sha1 = "84e5ad9f90856963f4b17cfe12872598e731082c"
+uuid = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
+version = "0.9.34"
+
+    [deps.PythonCall.extensions]
+    CategoricalArraysExt = "CategoricalArrays"
+    PyCallExt = "PyCall"
+
+    [deps.PythonCall.weakdeps]
+    CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
+    PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
 
 [[deps.QOI]]
 deps = ["ColorTypes", "FileIO", "FixedPointNumbers"]
@@ -2084,6 +2173,11 @@ version = "1.28.0"
     NaNMath = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
     Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
+[[deps.UnsafePointers]]
+git-tree-sha1 = "c81331b3b2e60a982be57c046ec91f599ede674a"
+uuid = "e17b2a0c-0bdf-430a-bd0c-3a23cae4ff39"
+version = "1.0.0"
+
 [[deps.VectorizationBase]]
 deps = ["ArrayInterface", "CPUSummary", "HostCPUFeatures", "IfElse", "LayoutPointers", "Libdl", "LinearAlgebra", "SIMDTypes", "Static", "StaticArrayInterface"]
 git-tree-sha1 = "807a234dc5e6132dd6cf4c9317ca0917c4001ab3"
@@ -2244,6 +2338,12 @@ git-tree-sha1 = "86addc139bca85fdf9e7741e10977c45785727b7"
 uuid = "337d8026-41b4-5cde-a456-74a10e5b31d1"
 version = "1.11.3+0"
 
+[[deps.micromamba_jll]]
+deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl"]
+git-tree-sha1 = "717df6f6892af4ee13279a73aa58474e58a88667"
+uuid = "f8abcde7-e9b7-5caa-b8af-a437887ae8e4"
+version = "2.3.1+0"
+
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
@@ -2259,6 +2359,12 @@ version = "2022.3.0+0"
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
 uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 version = "17.7.0+0"
+
+[[deps.pixi_jll]]
+deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl"]
+git-tree-sha1 = "3667b0931a7fe50f0a5554c61af00e5640019e21"
+uuid = "4d7b5844-a134-5dcd-ac86-c8f19cd51bed"
+version = "0.63.2+0"
 
 [[deps.x264_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -2278,11 +2384,14 @@ version = "4.1.0+0"
 # ╠═ed7ee220-6759-11f1-a80e-0d481562c77e
 # ╟─25429817-6043-48ba-9269-fabe475cb2dd
 # ╟─deaf2b67-bdf0-46d7-91c4-60f7745a0161
+# ╟─39317222-2672-47a1-8a7e-0e6b8dea0d97
+# ╠═b07dd50e-f804-4132-b8a5-d55483e7302c
+# ╟─fb01c82c-8009-4a40-b773-4b3fcc99b8cd
 # ╟─f9550483-6127-4b1b-b334-cb2b0d9a0762
 # ╟─9d6815d3-958a-4efa-ad00-2ee5e84d62ae
 # ╟─757facfe-db64-4370-acf4-360595e804b3
 # ╟─f95f3092-f2f8-42e1-8fba-a6a77b8256f1
-# ╠═d79e7fc2-56df-4265-be72-f910386eed10
-# ╠═b07dd50e-f804-4132-b8a5-d55483e7302c
+# ╠═a33c9a67-4d7a-484c-88eb-0b1aa760dcce
+# ╠═034d74fe-1847-41bf-a69c-e67622512d68
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
