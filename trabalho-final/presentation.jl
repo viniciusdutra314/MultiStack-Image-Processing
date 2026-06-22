@@ -4,8 +4,20 @@
 using Markdown
 using InteractiveUtils
 
+# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
+macro bind(def, element)
+    #! format: off
+    return quote
+        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
+        local el = $(esc(element))
+        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
+        el
+    end
+    #! format: on
+end
+
 # ╔═╡ ed7ee220-6759-11f1-a80e-0d481562c77e
-using Images ,ImageContrastAdjustment,ImageFiltering,CairoMakie,FITSIO,Statistics
+using Images ,ImageContrastAdjustment,ImageFiltering,CairoMakie,FITSIO,Statistics,Distributions,PlutoUI
 
 # ╔═╡ 0f5c4e64-dad0-448a-a576-77adb7658db9
 md"
@@ -49,6 +61,44 @@ md"
 | **Homoscedástico ou Heterocedástico** | Heterocedástico 
 "
 
+# ╔═╡ f9550483-6127-4b1b-b334-cb2b0d9a0762
+md"## Transformada de Anscombe"
+
+# ╔═╡ 9d6815d3-958a-4efa-ad00-2ee5e84d62ae
+md"``\mu``:"
+
+# ╔═╡ 757facfe-db64-4370-acf4-360595e804b3
+@bind μ_slider PlutoUI.Slider(1:1:255, default=100.0, show_value=true)
+
+# ╔═╡ f95f3092-f2f8-42e1-8fba-a6a77b8256f1
+begin
+    μ = μ_slider
+    samples = 50_000 
+    dist_poisson = Distributions.Poisson(μ)
+    sampled_poisson = rand(dist_poisson, samples)
+    anscombe_transform(x) = 2 * sqrt(x + 3/8)
+    transformed_poisson=anscombe_transform.(sampled_poisson)
+    fig = Figure(size = (1000, 500))
+    
+    ax_poisson = CairoMakie.Axis(
+        fig[1,1], 
+        title = "Distribuição de Poisson (Média = $(round(mean(sampled_poisson);digits=4)), Variância = $(round(var(sampled_poisson); digits=4)))",
+        xlabel = "Valores",
+        ylabel = "Frequência"
+    )
+    
+    ax_anscombe = CairoMakie.Axis(
+        fig[1,2], 
+        title = "Transformada de Anscombe (Média = $(round(mean(transformed_poisson);digits=4)), Variância = $(round(var(transformed_poisson); digits=4)))",
+        xlabel = "Valores",
+        ylabel = "Frequência"
+    )
+    
+      hist!(ax_poisson, sampled_poisson; bins = 50, color = :azure4, strokewidth = 1, strokecolor = :black)
+    hist!(ax_anscombe, transformed_poisson; bins = 50, color = :orange, strokewidth = 1, strokecolor = :black)
+    fig
+end
+
 # ╔═╡ d79e7fc2-56df-4265-be72-f910386eed10
 begin
     function read_fits(path)
@@ -75,65 +125,26 @@ begin
 
 end
 
-# ╔═╡ c55a9016-a39d-46b7-8b50-a1af176dd100
-begin
-    # G é o canal bruto linear (ex: max.(read(f[1]), 0.0))
-    cropped = G 
-
-    function remover_ruido_poisson_linear(img; σ_gaussiano=1.0)
-        # Transforma os dados em Float puro (preservando a escala original de contagem de fótons)
-        img_float = Float64.(channelview(img))
-        
-        # 1. Transformada Direta de Anscombe
-        img_anscombe = 2.0 .* sqrt.(max.(img_float .+ (3/8), 0.0))
-        
-        # 2. Filtragem espacial (Filtro Gaussiano)
-        img_filtrada_anscombe = imfilter(img_anscombe, Kernel.gaussian(σ_gaussiano))
-        
-        # 3. Transformada Inversa Algébrica
-        img_recuperada = (img_filtrada_anscombe ./ 2.0).^2 .- (3/8)
-        
-        # CORREÇÃO: Não usamos clamp(0,1) aqui porque os dados brutos legítimos 
-        # do Hubble ultrapassam muito o valor 1. Apenas garantimos que não há negativos.
-        img_recuperada = max.(img_recuperada, 0.0)
-        
-        return img_recuperada
-    end
-
-    # Roda a filtragem no domínio linear correto
-    removed_poisson_linear = remover_ruido_poisson_linear(cropped)
-
-    # Agora sim a subtração do ruído isolado faz sentido na escala original!
-    noise = Float64.(channelview(cropped)) .- removed_poisson_linear
-
-    # --- Gerando os Gráficos ---
-    fig = Figure(size = (900, 400))
-    
-    ax_img = CairoMakie.Axis(fig[1, 1]; yscale = log10, title = "Sinal Original Bruto", xlabel = "Contagem de Fótons")
-    ax_noise = CairoMakie.Axis(fig[1, 2]; yscale = log10, title = "Ruído de Poisson Isolado", xlabel = "Amplitude do Ruído")
-    
-    hist!(ax_img, Float64.(channelview(cropped))[:]; bins = 50, color = :blue)
-    hist!(ax_noise, noise[:]; bins = 50, color = :red)
-    
-    fig
-end
-
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 FITSIO = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
 ImageContrastAdjustment = "f332f351-ec65-5f6a-b3d1-319c6670881a"
 ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
 CairoMakie = "~0.15.11"
+Distributions = "~0.25.126"
 FITSIO = "~0.17.5"
 ImageContrastAdjustment = "~0.3.13"
 ImageFiltering = "~0.7.12"
 Images = "~0.26.2"
+PlutoUI = "~0.7.83"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -142,21 +153,23 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "48626785a334722cd065e9616a2a743823a0b4f7"
+project_hash = "fdd28782656e1f6f0e1221e5646259e26f867823"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
 git-tree-sha1 = "d92ad398961a3ed262d8bf04a1a2b8340f915fef"
 uuid = "621f4979-c628-5d54-868e-fcf4e3e8185c"
 version = "1.5.0"
+weakdeps = ["ChainRulesCore", "Test"]
 
     [deps.AbstractFFTs.extensions]
     AbstractFFTsChainRulesCoreExt = "ChainRulesCore"
     AbstractFFTsTestExt = "Test"
 
-    [deps.AbstractFFTs.weakdeps]
-    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+[[deps.AbstractPlutoDingetjes]]
+git-tree-sha1 = "6c3913f4e9bdf6ba3c08041a446fb1332716cbc2"
+uuid = "6e696c72-6542-2067-7265-42206c756150"
+version = "1.4.0"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
@@ -663,14 +676,11 @@ deps = ["Compat", "Dates"]
 git-tree-sha1 = "3bab2c5aa25e7840a4b065805c0cdfc01f3068d2"
 uuid = "48062228-2e41-5def-b9a4-89aafe57970f"
 version = "0.9.24"
+weakdeps = ["Mmap", "Test"]
 
     [deps.FilePathsBase.extensions]
     FilePathsBaseMmapExt = "Mmap"
     FilePathsBaseTestExt = "Test"
-
-    [deps.FilePathsBase.weakdeps]
-    Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
-    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
@@ -831,6 +841,24 @@ deps = ["LinearAlgebra", "OpenLibm_jll", "SpecialFunctions"]
 git-tree-sha1 = "68c173f4f449de5b438ee67ed0c9c748dc31a2ec"
 uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
 version = "0.3.28"
+
+[[deps.Hyperscript]]
+deps = ["Test"]
+git-tree-sha1 = "179267cfa5e712760cd43dcae385d7ea90cc25a4"
+uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
+version = "0.0.5"
+
+[[deps.HypertextLiteral]]
+deps = ["Tricks"]
+git-tree-sha1 = "d1a86724f81bcd184a38fd284ce183ec067d71a0"
+uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+version = "1.0.0"
+
+[[deps.IOCapture]]
+deps = ["Logging", "Random"]
+git-tree-sha1 = "0ee181ec08df7d7c911901ea38baf16f755114dc"
+uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
+version = "1.0.0"
 
 [[deps.IfElse]]
 git-tree-sha1 = "debdd00ffef04665ccbb3e150747a77560e8fad1"
@@ -1042,14 +1070,11 @@ version = "0.7.14"
 git-tree-sha1 = "a779299d77cd080bf77b97535acecd73e1c5e5cb"
 uuid = "3587e190-3f89-42d0-90ee-14403ec27112"
 version = "0.1.17"
+weakdeps = ["Dates", "Test"]
 
     [deps.InverseFunctions.extensions]
     InverseFunctionsDatesExt = "Dates"
     InverseFunctionsTestExt = "Test"
-
-    [deps.InverseFunctions.weakdeps]
-    Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
-    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [[deps.IrrationalConstants]]
 git-tree-sha1 = "b2d91fe939cae05960e760110b328288867b5758"
@@ -1274,6 +1299,11 @@ version = "0.12.174"
     ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
     NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
     SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+
+[[deps.MIMEs]]
+git-tree-sha1 = "c64d943587f7187e751162b3b84445bbbd79f691"
+uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
+version = "1.1.0"
 
 [[deps.MKL_jll]]
 deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl", "oneTBB_jll"]
@@ -1525,6 +1555,12 @@ deps = ["ColorSchemes", "Colors", "Dates", "PrecompileTools", "Printf", "Random"
 git-tree-sha1 = "26ca162858917496748aad52bb5d3be4d26a228a"
 uuid = "995b91a9-d308-5afd-9ec6-746e21dbc043"
 version = "1.4.4"
+
+[[deps.PlutoUI]]
+deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "Downloads", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
+git-tree-sha1 = "e189d0623e7ce9c37389bac17e80aac3b0302e75"
+uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+version = "0.7.83"
 
 [[deps.PolyesterWeave]]
 deps = ["BitTwiddlingConvenienceFunctions", "CPUSummary", "IfElse", "Static", "ThreadingUtilities"]
@@ -1962,6 +1998,11 @@ git-tree-sha1 = "1feb45f88d133a655e001435632f019a9a1bcdb6"
 uuid = "62fd8b95-f654-4bbd-a8a5-9c27f68ccd50"
 version = "0.1.1"
 
+[[deps.Test]]
+deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
+uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+version = "1.11.0"
+
 [[deps.ThreadingUtilities]]
 deps = ["ManualMemory"]
 git-tree-sha1 = "7c73336785b21f723f5b143f6e99cf6c43b37dc1"
@@ -1985,10 +2026,20 @@ git-tree-sha1 = "0c45878dcfdcfa8480052b6ab162cdd138781742"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 version = "0.11.3"
 
+[[deps.Tricks]]
+git-tree-sha1 = "311349fd1c93a31f783f977a71e8b062a57d4101"
+uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
+version = "0.1.13"
+
 [[deps.TriplotBase]]
 git-tree-sha1 = "4d4ed7f294cda19382ff7de4c137d24d16adc89b"
 uuid = "981d1d27-644d-49a2-9326-4793e63143c3"
 version = "0.1.0"
+
+[[deps.URIs]]
+git-tree-sha1 = "bef26fb046d031353ef97a82e3fdb6afe7f21b1a"
+uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
+version = "1.6.1"
 
 [[deps.UUIDs]]
 deps = ["Random", "SHA"]
@@ -2227,8 +2278,11 @@ version = "4.1.0+0"
 # ╠═ed7ee220-6759-11f1-a80e-0d481562c77e
 # ╟─25429817-6043-48ba-9269-fabe475cb2dd
 # ╟─deaf2b67-bdf0-46d7-91c4-60f7745a0161
+# ╟─f9550483-6127-4b1b-b334-cb2b0d9a0762
+# ╟─9d6815d3-958a-4efa-ad00-2ee5e84d62ae
+# ╟─757facfe-db64-4370-acf4-360595e804b3
+# ╟─f95f3092-f2f8-42e1-8fba-a6a77b8256f1
 # ╠═d79e7fc2-56df-4265-be72-f910386eed10
 # ╠═b07dd50e-f804-4132-b8a5-d55483e7302c
-# ╠═c55a9016-a39d-46b7-8b50-a1af176dd100
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
